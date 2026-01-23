@@ -13,7 +13,12 @@ import torch.nn.functional as F
 from tqdm import tqdm
 
 from sam2.modeling.sam2_base import NO_OBJ_SCORE, SAM2Base
-from sam2.utils.misc import concat_points, fill_holes_in_mask_scores, load_video_frames
+from sam2.utils.misc import (
+    concat_points,
+    fill_holes_in_mask_scores,
+    load_video_frames,
+    load_video_frames_from_image_paths,
+)
 
 
 class SAM2VideoPredictor(SAM2Base):
@@ -41,20 +46,32 @@ class SAM2VideoPredictor(SAM2Base):
     @torch.inference_mode()
     def init_state(
         self,
-        video_path,
+        video_path=None,
+        image_paths=None,
         offload_video_to_cpu=False,
         offload_state_to_cpu=False,
         async_loading_frames=False,
     ):
         """Initialize an inference state."""
         compute_device = self.device  # device of the model
-        images, video_height, video_width = load_video_frames(
-            video_path=video_path,
-            image_size=self.image_size,
-            offload_video_to_cpu=offload_video_to_cpu,
-            async_loading_frames=async_loading_frames,
-            compute_device=compute_device,
-        )
+        if image_paths is None and video_path is None:
+            raise ValueError("Either image_paths or video_path must be provided.")
+        if image_paths is not None:
+            images, video_height, video_width = load_video_frames_from_image_paths(
+                image_paths=image_paths,
+                image_size=self.image_size,
+                offload_video_to_cpu=offload_video_to_cpu,
+                async_loading_frames=async_loading_frames,
+                compute_device=compute_device,
+            )
+        else:
+            images, video_height, video_width = load_video_frames(
+                video_path=video_path,
+                image_size=self.image_size,
+                offload_video_to_cpu=offload_video_to_cpu,
+                async_loading_frames=async_loading_frames,
+                compute_device=compute_device,
+            )
         inference_state = {}
         inference_state["images"] = images
         inference_state["num_frames"] = len(images)

@@ -210,6 +210,56 @@ def load_video_frames(
         )
 
 
+def load_video_frames_from_image_paths(
+    image_paths,
+    image_size,
+    offload_video_to_cpu,
+    img_mean=(0.485, 0.456, 0.406),
+    img_std=(0.229, 0.224, 0.225),
+    async_loading_frames=False,
+    compute_device=torch.device("cuda"),
+):
+    """
+    Load the video frames from an explicit list of image paths.
+
+    The input order is preserved. Frames are resized to image_size x image_size.
+    """
+    if not image_paths:
+        raise RuntimeError("no images found in image_paths")
+    img_paths = [os.fspath(p) for p in image_paths]
+    for img_path in img_paths:
+        if not os.path.isfile(img_path):
+            raise RuntimeError(f"image path does not exist: {img_path}")
+
+    img_mean = torch.tensor(img_mean, dtype=torch.float32)[:, None, None]
+    img_std = torch.tensor(img_std, dtype=torch.float32)[:, None, None]
+
+    if async_loading_frames:
+        lazy_images = AsyncVideoFrameLoader(
+            img_paths,
+            image_size,
+            offload_video_to_cpu,
+            img_mean,
+            img_std,
+            compute_device,
+        )
+        return lazy_images, lazy_images.video_height, lazy_images.video_width
+
+    images = torch.zeros(
+        len(img_paths), 3, image_size, image_size, dtype=torch.float32
+    )
+    for n, img_path in enumerate(tqdm(img_paths, desc="frame loading (images)")):
+        images[n], video_height, video_width = _load_img_as_tensor(img_path, image_size)
+    if not offload_video_to_cpu:
+        images = images.to(compute_device)
+        img_mean = img_mean.to(compute_device)
+        img_std = img_std.to(compute_device)
+    # normalize by mean and std
+    images -= img_mean
+    images /= img_std
+    return images, video_height, video_width
+
+
 def load_video_frames_from_jpg_images(
     video_path,
     image_size,
