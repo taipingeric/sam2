@@ -47,116 +47,88 @@ class SAM2VideoPredictor(SAM2Base):
     @torch.inference_mode()
     def init_state(
         self,
-        video_path=None,
-        image_paths=None,
-        image_np_array=None,
+        image_np_array: list[np.ndarray],
         offload_video_to_cpu=False,
         offload_state_to_cpu=False,
         async_loading_frames=False,
     ):
         """Initialize an inference state."""
-        compute_device = self.device  # device of the model
-        sources_provided = sum(
-            source is not None for source in (video_path, image_paths, image_np_array)
-        )
-        if sources_provided == 0:
-            raise ValueError(
-                "One of image_paths, video_path, or image_np_array must be provided."
-            )
-        if sources_provided > 1:
-            raise ValueError(
-                "Only one of image_paths, video_path, or image_np_array can be provided."
-            )
-        if image_np_array is not None:
-            if async_loading_frames:
-                warnings.warn(
-                    "async_loading_frames is ignored when image_np_array is provided.",
-                    category=UserWarning,
-                    stacklevel=2,
-                )
-            if isinstance(image_np_array, (list, tuple)):
-                if len(image_np_array) == 0:
-                    raise ValueError("image_np_array is empty.")
-                image_np_array = np.stack(
-                    [np.asarray(frame) for frame in image_np_array], axis=0
-                )
-            if torch.is_tensor(image_np_array):
-                images_np = image_np_array
-            else:
-                images_np = np.asarray(image_np_array)
-            images_tensor = (
-                images_np if torch.is_tensor(images_np) else torch.from_numpy(images_np)
-            )
 
-            if images_np.ndim == 3:
-                # Single frame: HWC or CHW
-                if images_np.shape[-1] == 3:
-                    video_height, video_width = images_np.shape[0], images_np.shape[1]
-                    images = images_tensor.permute(2, 0, 1).unsqueeze(0)
-                elif images_np.shape[0] == 3:
-                    video_height, video_width = images_np.shape[1], images_np.shape[2]
-                    images = images_tensor.unsqueeze(0)
-                else:
-                    raise ValueError(
-                        "image_np_array must have 3 channels in HWC or CHW format."
-                    )
-            elif images_np.ndim == 4:
-                # Multiple frames: THWC or TCHW
-                if images_np.shape[-1] == 3:
-                    video_height, video_width = images_np.shape[1], images_np.shape[2]
-                    images = images_tensor.permute(0, 3, 1, 2)
-                elif images_np.shape[1] == 3:
-                    video_height, video_width = images_np.shape[2], images_np.shape[3]
-                    images = images_tensor
-                else:
-                    raise ValueError(
-                        "image_np_array must have 3 channels in THWC or TCHW format."
-                    )
+        compute_device = self.device  # device of the model
+        if async_loading_frames:
+            warnings.warn(
+                "async_loading_frames is ignored when image_np_array is provided.",
+                category=UserWarning,
+                stacklevel=2,
+            )
+        if isinstance(image_np_array, (list, tuple)):
+            if len(image_np_array) == 0:
+                raise ValueError("image_np_array is empty.")
+            image_np_array = np.stack(
+                [np.asarray(frame) for frame in image_np_array], axis=0
+            )
+        if torch.is_tensor(image_np_array):
+            images_np = image_np_array
+        else:
+            images_np = np.asarray(image_np_array)
+        images_tensor = (
+            images_np if torch.is_tensor(images_np) else torch.from_numpy(images_np)
+        )
+
+        if images_np.ndim == 3:
+            # Single frame: HWC or CHW
+            if images_np.shape[-1] == 3:
+                video_height, video_width = images_np.shape[0], images_np.shape[1]
+                images = images_tensor.permute(2, 0, 1).unsqueeze(0)
+            elif images_np.shape[0] == 3:
+                video_height, video_width = images_np.shape[1], images_np.shape[2]
+                images = images_tensor.unsqueeze(0)
             else:
                 raise ValueError(
-                    "image_np_array must be a 3D (HWC/CHW) or 4D (THWC/TCHW) array."
+                    "image_np_array must have 3 channels in HWC or CHW format."
                 )
-
-            if images.dtype == torch.uint8:
-                images = images.float() / 255.0
+        elif images_np.ndim == 4:
+            # Multiple frames: THWC or TCHW
+            if images_np.shape[-1] == 3:
+                video_height, video_width = images_np.shape[1], images_np.shape[2]
+                images = images_tensor.permute(0, 3, 1, 2)
+            elif images_np.shape[1] == 3:
+                video_height, video_width = images_np.shape[2], images_np.shape[3]
+                images = images_tensor
             else:
-                images = images.float()
-
-            images = F.interpolate(
-                images,
-                size=(self.image_size, self.image_size),
-                mode="bilinear",
-                align_corners=False,
-                antialias=True,
-            )
-            img_mean = torch.tensor((0.485, 0.456, 0.406), dtype=torch.float32)[
-                :, None, None
-            ]
-            img_std = torch.tensor((0.229, 0.224, 0.225), dtype=torch.float32)[
-                :, None, None
-            ]
-            if not offload_video_to_cpu:
-                images = images.to(compute_device)
-                img_mean = img_mean.to(compute_device)
-                img_std = img_std.to(compute_device)
-            images -= img_mean
-            images /= img_std
-        elif image_paths is not None:
-            images, video_height, video_width = load_video_frames_from_image_paths(
-                image_paths=image_paths,
-                image_size=self.image_size,
-                offload_video_to_cpu=offload_video_to_cpu,
-                async_loading_frames=async_loading_frames,
-                compute_device=compute_device,
-            )
+                raise ValueError(
+                    "image_np_array must have 3 channels in THWC or TCHW format."
+                )
         else:
-            images, video_height, video_width = load_video_frames(
-                video_path=video_path,
-                image_size=self.image_size,
-                offload_video_to_cpu=offload_video_to_cpu,
-                async_loading_frames=async_loading_frames,
-                compute_device=compute_device,
+            raise ValueError(
+                "image_np_array must be a 3D (HWC/CHW) or 4D (THWC/TCHW) array."
             )
+
+        if images.dtype == torch.uint8:
+            images = images.float() / 255.0
+        else:
+            images = images.float()
+
+        images = F.interpolate(
+            images,
+            size=(self.image_size, self.image_size),
+            mode="bilinear",
+            align_corners=False,
+            antialias=True,
+        )
+        img_mean = torch.tensor((0.485, 0.456, 0.406), dtype=torch.float32)[
+            :, None, None
+        ]
+        img_std = torch.tensor((0.229, 0.224, 0.225), dtype=torch.float32)[
+            :, None, None
+        ]
+        if not offload_video_to_cpu:
+            images = images.to(compute_device)
+            img_mean = img_mean.to(compute_device)
+            img_std = img_std.to(compute_device)
+        images -= img_mean
+        images /= img_std
+            
         inference_state = {}
         inference_state["images"] = images
         inference_state["num_frames"] = len(images)
